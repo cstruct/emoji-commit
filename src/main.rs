@@ -2,20 +2,22 @@ use std::env;
 use std::error::Error;
 use std::fmt;
 use std::fs::File;
-use std::io::{Write, stderr, stdin};
+use std::io::{Write, stderr};
 use std::process::{Command, exit};
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use termion::event::Key;
-use termion::input::TermRead;
-use termion::raw::IntoRawMode;
+use crossterm::event::{Event, KeyEvent, KeyCode, KeyModifiers};
+use crossterm::{terminal, event};
 
 use default_editor;
 use emoji_commit_type::CommitType;
 use log_update::LogUpdate;
 use structopt::StructOpt;
+#[cfg(target_os = "windows")]
+use ansi_term::enable_ansi_support;
 use ansi_term::Colour::{RGB, Green, Red, White};
+use path_slash::PathExt;
 
 mod commit_rules;
 mod git;
@@ -45,9 +47,7 @@ fn commit_type_at_index (index: u8) -> Option<CommitType> {
 
 fn select_emoji() -> Option<&'static str> {
     let mut log_update = LogUpdate::new(stderr()).unwrap();
-    let mut raw_output = stderr().into_raw_mode().unwrap();
-
-    let mut key_stream = stdin().keys();
+    terminal::enable_raw_mode().unwrap();
 
     let mut aborted = false;
     let mut selected = CommitType::Breaking;
@@ -58,27 +58,27 @@ fn select_emoji() -> Option<&'static str> {
     loop {
         print_emoji_selector(&mut log_update, &selected);
 
-        match key_stream.next().unwrap().unwrap() {
-            Key::Ctrl('c') => { aborted = true; break },
-            Key::Char('\n') => break,
-            Key::Up | Key::Char('k') | Key::Char('K') => selected = selected.prev_variant().unwrap_or(CommitType::last_variant()),
-            Key::Down | Key::Char('j') | Key::Char('J') => selected = selected.next_variant().unwrap_or(CommitType::first_variant()),
-            Key::Char(key @ '1' ..= '9') => { commit_type_at_index((key as u8) - ('1' as u8)).map(|t| selected = t); },
+        let event = if let Event::Key(event) = event::read().ok()? { event } else { continue };
+
+        match event {
+            KeyEvent {code: KeyCode::Char('c' | 'C'), modifiers: KeyModifiers::CONTROL} => { aborted = true; break },
+            KeyEvent {code: KeyCode::Enter, modifiers: _} => break,
+            KeyEvent {code: KeyCode::Char('k' | 'K') | KeyCode::Up, modifiers: _} => selected = selected.prev_variant().unwrap_or(CommitType::last_variant()),
+            KeyEvent {code: KeyCode::Char('j' | 'J') | KeyCode::Down, modifiers: _} => selected = selected.next_variant().unwrap_or(CommitType::first_variant()),
+            KeyEvent {code: KeyCode::Char(key @ '1' ..= '9'), modifiers: _} => { commit_type_at_index((key as u8) - ('1' as u8)).map(|t| selected = t); },
             _ => {},
         }
     }
 
     log_update.clear().unwrap();
-    raw_output.flush().unwrap();
+    terminal::disable_raw_mode().unwrap();
 
     if aborted { None } else { Some(selected.emoji()) }
 }
 
 fn collect_commit_message(selected_emoji: &'static str, launch_editor: &mut bool) -> Option<String> {
     let mut log_update = LogUpdate::new(stderr()).unwrap();
-    let mut raw_output = stderr().into_raw_mode().unwrap();
-
-    let mut key_stream = stdin().keys();
+    terminal::enable_raw_mode().unwrap();
 
     let mut aborted = false;
     let mut input = String::new();
@@ -99,18 +99,20 @@ fn collect_commit_message(selected_emoji: &'static str, launch_editor: &mut bool
 
         log_update.render(&text).unwrap();
 
-        match key_stream.next().unwrap().unwrap() {
-            Key::Ctrl('c') => { aborted = true; break },
-            Key::Char('\n') => break,
-            Key::Char(c) => input.push(c),
-            Key::Backspace => { input.pop(); },
-            Key::Ctrl('e') => { *launch_editor = true; break },
+        let event = if let Event::Key(event) = event::read().ok()? { event } else { continue };
+
+        match event {
+            KeyEvent {code: KeyCode::Char('c' | 'C'), modifiers: KeyModifiers::CONTROL} => { aborted = true; break },
+            KeyEvent {code: KeyCode::Char('e' | 'E'), modifiers: KeyModifiers::CONTROL} => { *launch_editor = true; break },
+            KeyEvent {code: KeyCode::Enter, modifiers: _} => break,
+            KeyEvent {code: KeyCode::Backspace, modifiers: _} => { input.pop(); },
+            KeyEvent {code: KeyCode::Char(c), modifiers: _} => input.push(c),
             _ => {},
         }
     }
 
     log_update.clear().unwrap();
-    raw_output.flush().unwrap();
+    terminal::disable_raw_mode().unwrap();
 
     if aborted { None } else { Some(String::from(input.trim())) }
 }
@@ -139,7 +141,7 @@ fn launch_default_editor(out_path: PathBuf) {
 }
 
 fn launch_git_with_self_as_editor() {
-    let self_path = std::env::current_exe().unwrap();
+    let self_path = std::env::current_exe().unwrap().to_slash().unwrap();
 
     run_cmd(Command::new("git").arg("commit").env("GIT_EDITOR", self_path))
 }
@@ -251,6 +253,11 @@ struct Opt {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    #[cfg(target_os = "windows")]
+    {
+        enable_ansi_support().unwrap();
+    }
+    
     match Opt::from_args() {
         Opt {out_path: None, refspecs: Some(refspecs)} => validate(refspecs),
         Opt {out_path: Some(OutPath::EditMessage(out_path)), refspecs: None} => {
