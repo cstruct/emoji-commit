@@ -6,6 +6,8 @@ use std::io::{Write, stderr};
 use std::process::{Command, exit};
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::ffi::CString;
+use libc::system;
 
 use crossterm::event::{Event, KeyEvent, KeyCode, KeyModifiers};
 use crossterm::{terminal, event};
@@ -136,8 +138,11 @@ fn run_cmd(cmd: &mut Command) {
 
 fn launch_default_editor(out_path: PathBuf) {
     let editor = default_editor::get().unwrap();
+    let cmd = CString::new(format!("{} {}", editor, out_path.display())).unwrap();
 
-    run_cmd(Command::new(&editor).arg(out_path))
+    unsafe {
+        system(cmd.as_ptr());
+    }
 }
 
 fn launch_git_with_self_as_editor() {
