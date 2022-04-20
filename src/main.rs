@@ -220,6 +220,7 @@ fn validate(refspecs: Vec<String>) -> Result<(), Box<dyn Error>> {
 enum OutPath {
     EditMessage(PathBuf),
     RebaseTodo(PathBuf),
+    MergeMsg(PathBuf),
     AddPHunkEdit(PathBuf),
 }
 
@@ -231,6 +232,8 @@ impl FromStr for OutPath {
             Ok(OutPath::EditMessage(path))
         } else if path.ends_with(".git/rebase-merge/git-rebase-todo") {
             Ok(OutPath::RebaseTodo(path))
+        } else if path.ends_with(".git/MERGE_MSG") {
+            Ok(OutPath::MergeMsg(path))
         } else if path.ends_with(".git/addp-hunk-edit.diff") {
             Ok(OutPath::AddPHunkEdit(path))
         } else {
@@ -270,7 +273,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             Ok(())
         },
         Opt {
-            out_path: Some(OutPath::RebaseTodo(out_path) | OutPath::AddPHunkEdit(out_path)),
+            out_path: Some(OutPath::RebaseTodo(out_path) | OutPath::MergeMsg(out_path) | OutPath::AddPHunkEdit(out_path)),
             refspecs: None,
         } => {
             launch_default_editor(out_path);
